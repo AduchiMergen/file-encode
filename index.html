@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>File Encryption Service</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .card {
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 20px;
+            margin-top: 20px;
+        }
+        .card-title {
+            font-size: 24px;
+            margin-bottom: 10px;
+        }
+        .card-description {
+            color: #666;
+            margin-bottom: 20px;
+        }
+        .tabs {
+            display: flex;
+            margin-bottom: 20px;
+        }
+        .tab {
+            flex: 1;
+            text-align: center;
+            padding: 10px;
+            background-color: #f0f0f0;
+            cursor: pointer;
+        }
+        .tab.active {
+            background-color: #007bff;
+            color: white;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        .form-row {
+            display: flex;
+            gap: 15px;
+        }
+        .form-row .form-group {
+            flex: 1;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+        }
+        input[type="file"],
+        input[type="number"] {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .result {
+            margin-top: 20px;
+        }
+        .result a {
+            color: #007bff;
+            text-decoration: none;
+        }
+        .result a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1 class="card-title">File Encryption Service</h1>
+        <p class="card-description">Encrypt and decrypt files using Shamir's Secret Sharing</p>
+
+        <div class="tabs">
+            <div class="tab active" data-tab="encode">Encode</div>
+            <div class="tab" data-tab="decode">Decode</div>
+        </div>
+
+        <div id="encode-tab" class="tab-content active">
+            <div class="form-group">
+                <label for="encode-file">File to Encrypt</label>
+                <input type="file" id="encode-file">
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="total-keys">Total Keys</label>
+                    <input type="number" id="total-keys" min="2" value="3">
+                </div>
+                <div class="form-group">
+                    <label for="required-keys">Required Keys</label>
+                    <input type="number" id="required-keys" min="2" value="2">
+                </div>
+            </div>
+            <button id="encrypt-btn">Encrypt</button>
+            <div id="encryption-result" class="result"></div>
+            <img id="loading-image-encrypt" src="loading.gif" style="display: none;">
+        </div>
+
+        <div id="decode-tab" class="tab-content">
+            <img id="loading-image-decrypt" src="loading.gif" style="display: none;">
+            <div class="form-group">
+                <label for="decode-files">Encrypted File</label>
+                <input type="file" id="decode-files">
+            </div>
+            <div id="shard-fields">
+                <div class="form-group">
+                    <label for="decode-shard-1">Key Shard 1</label>
+                    <input type="file" id="decode-shard-1">
+                </div>
+            </div>
+            <button id="add-shard-btn">Add Shard</button>
+            <button id="decrypt-btn">Decrypt</button>
+            <div id="decryption-result" class="result"></div>
+        </div>
+    </div>
+    <script src="http://code.jquery.com/jquery.js"></script>
+    <script src="BigInt.js"></script>
+    <script src="threshold.js"></script>
+
+    <script>
+        // Tab switching functionality
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                tab.classList.add('active');
+                document.getElementById(`${tab.dataset.tab}-tab`).classList.add('active');
+            });
+        });
+
+        let shardCount = 1;
+        document.getElementById('add-shard-btn').addEventListener('click', () => {
+            shardCount++;
+            const newShardField = `
+                <div class="form-group">
+                    <label for="decode-shard-${shardCount}">Key Shard ${shardCount}</label>
+                    <input type="file" id="decode-shard-${shardCount}">
+                </div>
+            `;
+            document.getElementById('shard-fields').insertAdjacentHTML('beforeend', newShardField);
+        });
+
+        // Placeholder functions for encryption and decryption
+        async function encryptFile(file, secret) {
+            try {
+                // Convert the hexadecimal secret to a CryptoKey
+                const key = await window.crypto.subtle.importKey(
+                    "raw",
+                    new Uint8Array(secret.match(/.{1,2}/g).map(byte => parseInt(byte, 16))),
+                    "AES-CBC",
+                    false,
+                    ["encrypt"]
+                );
+
+                // Read the file as an ArrayBuffer
+                const fileContent = await file.arrayBuffer();
+
+                // Generate a random Initialization Vector (IV)
+                const iv = window.crypto.getRandomValues(new Uint8Array(16));
+
+                // Perform AES-256 encryption
+                const encryptedBuffer = await window.crypto.subtle.encrypt(
+                    { name: "AES-CBC", iv: iv },
+                    key,
+                    fileContent
+                );
+
+                // Combine the IV and encrypted data into a single buffer
+                const outputBuffer = new Uint8Array(iv.length + encryptedBuffer.byteLength);
+                outputBuffer.set(iv, 0);
+                outputBuffer.set(new Uint8Array(encryptedBuffer), iv.length);
+
+                // Create a Blob from the combined buffer
+                const encryptedBlob = new Blob([outputBuffer], { type: file.type });
+
+                // Create a download link for the encrypted file
+                const encryptedFileLink = URL.createObjectURL(encryptedBlob);
+
+                return encryptedFileLink;
+            } catch (error) {
+                console.error("Encryption error:", error);
+                throw error; // Handle the error appropriately in your application
+            }
+        }
+
+        async function decryptFile(encryptedFile, secret) {
+            try {
+                // Convert the hexadecimal secret to a CryptoKey
+                const key = await window.crypto.subtle.importKey(
+                    "raw",
+                    new Uint8Array(secret.match(/.{1,2}/g).map(byte => parseInt(byte, 16))),
+                    "AES-CBC",
+                    false,
+                    ["decrypt"]
+                );
+
+                // Read the encrypted file as an ArrayBuffer
+                const encryptedFileContent = await encryptedFile.arrayBuffer();
+
+                // Extract the IV from the beginning of the encrypted data
+                const iv = encryptedFileContent.slice(0, 16);
+                const encryptedData = encryptedFileContent.slice(16);
+
+                // Perform AES-256 decryption
+                const decryptedBuffer = await window.crypto.subtle.decrypt(
+                    { name: "AES-CBC", iv: iv },
+                    key,
+                    encryptedData
+                );
+
+                // Create a Blob from the decrypted buffer
+                const decryptedBlob = new Blob([decryptedBuffer], { type: encryptedFile.type });
+
+                // Create a download link for the decrypted file
+                const decryptedFileLink = URL.createObjectURL(decryptedBlob);
+
+                return decryptedFileLink;
+            } catch (error) {
+                console.error("Decryption error:", error);
+                throw error; // Handle the error appropriately in your application
+            }
+        }
+
+        // Encryption process
+        document.getElementById('encrypt-btn').addEventListener('click', async () => {
+            document.getElementById('loading-image-encrypt').style.display = 'block';
+            const file = document.getElementById('encode-file').files[0];
+            const totalKeys = parseInt(document.getElementById('total-keys').value);
+            const requiredKeys = parseInt(document.getElementById('required-keys').value);
+
+            if (totalKeys >= 3 && requiredKeys >= 2 && requiredKeys <= totalKeys) {
+                const DISPLAY_BASE = 64;
+
+                var p = new BigInt("2088777762826305013383505421433248765159928498094767560768466966567907815943114913697653623869995116681780213428878525675975146876371587214526472175702730555891913953087419996680723180268767436628856140023711892452752637678795425491344669368689173234993615817411607408142568097480237218228935955567196058013373877953763575571893811260380521881199158906865646938606053392886118050031944799735428431083387671119770582972636475828868993468175623745278992950200378082698016834123350187336667701102065944176539101539967232738823866030427593651674376183667313502442636985692736251100451996600824689569725191348984389234047613011826491221651463670760175217244205668540395396404626338035356013350390970159843272838740570750249568029814318270919965581026799223103588542213662268181168545768559583109699565908647069034130446538122789811975386004245926791375565757896881232014825891349839646101143284754309632642761262091805832273853416685712881460895799943803562931526946447700534506119799591992181598938403549249635436899734911318500356658140946238866331101615136443693143492746593769825639040634914004881853233821748296770156823859609045963714677955296206252171806002604826934379453346432983022263205841563476066872180487609416680806308379889") // 2^4097 - 159
+                var secret = new BigInt.randBigInt(256, 0)
+                tc = new ThresholdCrypto(256 /* bits */, totalKeys, requiredKeys, p /* global constant */);
+                const result = {keyShards: []}
+                $.each(tc.encrypt(secret), function (index, piece) {
+                  const shardContent = piece.x.toString(DISPLAY_BASE) + "," + piece.y.toString(DISPLAY_BASE);
+                  const shardBlob = new Blob([shardContent], { type: "text/plain" });
+                  const shardUrl = URL.createObjectURL(shardBlob);
+                  result.keyShards.push({
+                    index: index + 1,
+                    url: shardUrl
+                  });
+                });
+                result.encryptedFileLink = await encryptFile(file, secret.toString(16))
+              console.log(secret.toString(16))
+              console.log(result);
+                const resultHtml = `
+                     <h3>Encryption Result:</h3>
+                     <p><strong>Encrypted File:</strong> <a href="${result.encryptedFileLink}" download="${file.name}.encrypted">Download Encrypted File</a></p>
+                     <p><strong>Key Shards:</strong></p>
+                     <ul>
+                         ${result.keyShards.map((shard) => `
+                             <li><a href="${shard.url}" download="key-shard-${shard.index}.txt">Key Shard ${shard.index}</a></li>
+                         `).join('')}
+                     </ul>
+                 `;
+                document.getElementById('encryption-result').innerHTML = resultHtml;
+            } else {
+                alert('Please fill in all fields correctly.');
+            }
+            document.getElementById('loading-image-encrypt').style.display = 'none';
+        });
+
+        // Decryption process
+        document.getElementById('decrypt-btn').addEventListener('click', async () => {
+            document.getElementById('loading-image-decrypt').style.display = 'block';
+            const encryptedFile = document.getElementById('decode-files').files[0];
+            const shardFiles = Array.from(document.querySelectorAll('[id^="decode-shard-"]'))
+                .map(input => input.files[0])
+                .filter(file => file !== undefined);
+
+            if (encryptedFile && shardFiles.length > 0) {
+                const DISPLAY_BASE = 64;
+                const p = new BigInt("2088777762826305013383505421433248765159928498094767560768466966567907815943114913697653623869995116681780213428878525675975146876371587214526472175702730555891913953087419996680723180268767436628856140023711892452752637678795425491344669368689173234993615817411607408142568097480237218228935955567196058013373877953763575571893811260380521881199158906865646938606053392886118050031944799735428431083387671119770582972636475828868993468175623745278992950200378082698016834123350187336667701102065944176539101539967232738823866030427593651674376183667313502442636985692736251100451996600824689569725191348984389234047613011826491221651463670760175217244205668540395396404626338035356013350390970159843272838740570750249568029814318270919965581026799223103588542213662268181168545768559583109699565908647069034130446538122789811975386004245926791375565757896881232014825891349839646101143284754309632642761262091805832273853416685712881460895799943803562931526946447700534506119799591992181598938403549249635436899734911318500356658140946238866331101615136443693143492746593769825639040634914004881853233821748296770156823859609045963714677955296206252171806002604826934379453346432983022263205841563476066872180487609416680806308379889") // 2^4097 - 159
+                const shards = shardFiles.map(file => {
+                    return new Promise(async (resolve) => {
+                        const reader = new FileReader();
+                        reader.onload = (e) => {
+                            const content = e.target.result;
+                            const [x, y] = content.split(',').map(v => new BigInt(v, DISPLAY_BASE));
+                            resolve({ x, y });
+                        };
+                        reader.readAsText(file);
+                    });
+                });
+                const pieces = await Promise.all(shards);
+                const tc = new ThresholdCrypto(256, pieces.length, pieces.length, p);
+                const secret = tc.decrypt(pieces).toString(16);
+                const result = await decryptFile(encryptedFile, secret);
+                const resultHtml = `
+                    <h3>Decryption Result:</h3>
+                    <p><strong>Decrypted File:</strong> <a href="${result}" download="${encryptedFile.name.replace('.encrypted', '')}">Download Decrypted File</a></p>
+                `;
+                document.getElementById('decryption-result').innerHTML = resultHtml;
+            } else {
+                alert('Please select the encrypted file and at least one key shard.');
+            }
+            document.getElementById('loading-image-decrypt').style.display = 'none';
+        });
+    </script>
+</body>
+</html>
